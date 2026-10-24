@@ -22,11 +22,9 @@ test("authenticates, keeps failed services visible, and separates visibility fro
   await expect(
     page.getByRole("heading", { name: "系统资源", exact: true }),
   ).toBeVisible();
-  const failed = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", { name: "离线服务", exact: true }),
-    });
+  const failed = page.locator("article").filter({
+    has: page.getByRole("heading", { name: "离线服务", exact: true }),
+  });
   await expect(failed.locator(".badge")).toHaveText("异常");
   await expect(
     page.getByRole("heading", { name: "隐藏入口", exact: true }),
