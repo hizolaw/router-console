@@ -37,3 +37,13 @@ CPU 使用 `/proc/PID/stat` 的用户和内核 tick 除以墙钟时间，100% �
 - 网络、DNS 解耦的线上迁移与代理停止后的实际联网。
 
 ARM64 和 x86_64 的构建由 GitHub Actions 分别执行，结果以对应 workflow 为准。没有修改或部署线上路由器。
+
+
+## 2026-10-25：Nix 与 R4S 在线部署
+
+- 提供锁定 nixpkgs 的 Linux flake 包、开发环境与 NixOS 模块，不依赖宿主旧版 Rust。
+- 两种架构求值及模块启用/禁用、自定义令牌配置断言通过；x86_64 和 ARM64 的 Nix 包、11 项 Rust 测试、模块配置检查构建通过。ARM64 在 Mac mini 的 nix-darwin Linux builder 构建。
+- 已接入路由仓库，在 R4S 上完成预构建系统的 switch，未在 R4S 上求值或编译，未构建固件或重启设备。
+- 实际 LAN 页面、令牌认证、5 个插件、桌面和手机布局通过；初期服务 cgroup 内存约 5 MiB，3 个任务。令牌初始化及服务重启后保持不变。
+- 仅新增控制台与令牌初始化单元，旧代理、DNS、路由和看门狗未改变。代理出口和独立 DNS 迁移不在此次验收范围内。
+- 运行验证不等于新 generation 的重启启动验证。完整部署记录见路由仓库的 `docs/verification.md`。
