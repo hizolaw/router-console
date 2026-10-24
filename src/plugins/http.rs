@@ -10,17 +10,16 @@ pub struct HttpCollector {
     client: reqwest::Client,
     url: String,
     token: Option<String>,
+    missing_token: bool,
 }
 impl HttpCollector {
     pub fn new(p: &PluginConfig) -> Result<Self, String> {
         let token = p
             .token_env
             .as_ref()
-            .map(|key| {
-                std::env::var(key)
-                    .map_err(|_| format!("Missing token environment variable for plugin {}", p.id))
-            })
-            .transpose()?;
+            .and_then(|key| std::env::var(key).ok())
+            .filter(|value| !value.is_empty());
+        let missing_token = p.token_env.is_some() && token.is_none();
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -33,12 +32,20 @@ impl HttpCollector {
             client,
             url: p.probe_url.clone().unwrap(),
             token,
+            missing_token,
         })
     }
 }
 #[async_trait]
 impl Collector for HttpCollector {
     async fn collect(&mut self) -> Reading {
+        if self.missing_token {
+            return Reading {
+                health: Health::Unknown,
+                summary: "未提供此插件所需的运行时凭据".into(),
+                metrics: vec![],
+            };
+        }
         let started = Instant::now();
         let mut request = self.client.get(&self.url);
         if let Some(token) = &self.token {
@@ -77,6 +84,18 @@ impl Collector for HttpCollector {
 mod tests {
     use super::*;
     use axum::{Router, routing::get};
+    #[tokio::test]
+    async fn missing_credentials_only_make_this_plugin_unknown() {
+        let mut p: PluginConfig =
+            toml::from_str("id='http'\nname='HTTP'\nkind='http'\nprobe_url='http://127.0.0.1:9/'")
+                .unwrap();
+        p.token_env = Some(format!(
+            "ROUTER_CONSOLE_TEST_MISSING_{}",
+            rand::random::<u64>()
+        ));
+        let mut collector = HttpCollector::new(&p).unwrap();
+        assert_eq!(collector.collect().await.health, Health::Unknown);
+    }
     #[tokio::test]
     async fn detects_failure_and_does_not_follow_redirects() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

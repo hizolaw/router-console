@@ -2,7 +2,7 @@
 
 面向低资源 Linux 路由器的模块化 Web 控制台。Rust / Axum 后端嵌入 Preact 静态前端，发布后只运行一个程序，不需要 Node。
 
-**v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、可选插件和服务入口。尚不包含配置编辑、服务重启、订阅更新操作或 NixOS 部署模块。
+**v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、可选插件和服务入口。尚不包含配置编辑、服务重启或订阅更新操作。
 
 ## 快速运行
 
@@ -26,6 +26,53 @@ NixOS 开发机可先进入工具环境（此命令使用本机 nixpkgs，尚非
 ```sh
 nix shell nixpkgs#rustc nixpkgs#cargo nixpkgs#gcc nixpkgs#rustfmt nixpkgs#clippy nixpkgs#nodejs_22 nixpkgs#just
 ```
+
+## Nix flake 与 NixOS
+
+支持 `x86_64-linux` 和 `aarch64-linux`：
+
+```sh
+nix build .#router-console
+nix develop
+```
+
+Mac mini 的 nix-darwin Linux builder 可构建 ARM64 Linux 包：
+
+```sh
+nix build .#packages.aarch64-linux.default \
+  --builders @/etc/nix/machines --max-jobs 0
+```
+
+在自己的 NixOS flake 中添加并锁定 input：
+
+```nix
+inputs.router-console.url = "github:hizolaw/router-console";
+
+# Add this to the target system's modules:
+inputs.router-console.nixosModules.default
+```
+
+系统模块中配置：
+
+```nix
+services.router-console = {
+  enable = true;
+  listenAddress = "127.0.0.1";
+  port = 9080;
+  settings.title = "Router Console";
+  settings.plugins = [
+    { id = "system"; name = "系统资源"; kind = "system"; interval_secs = 5; }
+  ];
+};
+```
+
+默认使用本项目锁定的 nixpkgs 构建程序，不要求旧版宿主 nixpkgs 提供新的 Rust。服务以 DynamicUser 运行，通过 systemd credential 读取令牌，并限制权限与内存。默认首次启动在 `/var/lib/router-console/access.token` 生成 root-only 令牌；重启、切换系统不会覆盖它。管理员可用 `sudo cat /var/lib/router-console/access.token` 读取。
+
+可设置 `tokenFile = "/run/secrets/router-console"` 使用外部提供的运行时令牌；模块不会创建或覆盖外部文件。`environmentFiles` 可为 HTTP 插件提供运行时凭据。不要将秘密写入 `settings`，不要通过 Nix 路径值将秘密复制到 store。
+
+`openFirewall` 默认 false。需要 LAN 访问时设置实际 LAN 监听地址，并按部署的防火墙规则放行；暴露到不可信网络前应配置 HTTPS。`services.router-console.enable = false` 不创建控制台服务，也不停止其他网络服务。
+
+`nix flake check --no-build --all-systems` 检查两种架构和模块启用/禁用；`nix build` 会离线构建前端和 Rust，并运行 Rust 测试。Nix 集成不负责刷机或修改网络角色。
 
 ## 配置与插件
 
