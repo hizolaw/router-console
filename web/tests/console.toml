@@ -1,0 +1,25 @@
+listen = "127.0.0.1:19080"
+title = "Router Console Test"
+[[plugins]]
+id = "system"
+name = "系统资源"
+kind = "system"
+interval_secs = 5
+[[plugins]]
+id = "failed"
+name = "离线服务"
+kind = "http"
+probe_url = "http://127.0.0.1:9/"
+interval_secs = 5
+[[plugins]]
+id = "hidden"
+name = "隐藏入口"
+kind = "link"
+visible = false
+url = "http://localhost:9090/ui/"
+[[plugins]]
+id = "disabled"
+name = "禁用服务"
+kind = "link"
+enabled = false
+url = "http://localhost:9090/"

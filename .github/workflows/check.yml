@@ -1,0 +1,48 @@
+name: Check and build
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+      - run: npm ci --prefix web
+      - run: npm run format:check --prefix web
+      - run: npm run build --prefix web
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - if: matrix.arch == 'x86_64'
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - if: matrix.arch == 'x86_64'
+        run: npm run test:e2e --prefix web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: router-console-${{ matrix.arch }}-linux
+          path: target/release/router-console
+      - if: failure() && matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: web/test-results

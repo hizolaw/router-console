@@ -7,3 +7,10 @@ result
 result-*
 *.log
 .DS_Store
+/target/
+/config/local.toml
+/config/*.local.toml
+*.token
+/artifacts/
+/playwright-report/
+/test-results/

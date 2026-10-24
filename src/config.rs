@@ -1,0 +1,167 @@
+use serde::Deserialize;
+use std::{collections::HashSet, net::SocketAddr, path::Path};
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    #[serde(default = "listen")]
+    pub listen: SocketAddr,
+    #[serde(default = "title")]
+    pub title: String,
+    #[serde(default)]
+    pub plugins: Vec<PluginConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginConfig {
+    pub id: String,
+    pub name: String,
+    pub kind: Kind,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default = "yes")]
+    pub visible: bool,
+    #[serde(default = "interval")]
+    pub interval_secs: u64,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub probe_url: Option<String>,
+    #[serde(default)]
+    pub token_env: Option<String>,
+    #[serde(default)]
+    pub dns_server: Option<SocketAddr>,
+    #[serde(default)]
+    pub dns_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    System,
+    Http,
+    Dns,
+    Link,
+}
+
+fn listen() -> SocketAddr {
+    "127.0.0.1:9080".parse().unwrap()
+}
+fn title() -> String {
+    "Router Console".into()
+}
+fn yes() -> bool {
+    true
+}
+fn interval() -> u64 {
+    15
+}
+
+impl Config {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("Cannot read configuration: {e}"))?;
+        let cfg: Self = toml::from_str(&text)
+            .map_err(|_| "Invalid TOML configuration; check field names and types".to_string())?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.plugins.len() > 32 {
+            return Err("At most 32 plugins are supported".into());
+        }
+        if self.title.is_empty() || self.title.len() > 120 {
+            return Err("Title must contain 1–120 bytes".into());
+        }
+        let mut ids = HashSet::new();
+        for p in &self.plugins {
+            if p.id.is_empty()
+                || p.id.len() > 48
+                || !p
+                    .id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
+                return Err(
+                    "Plugin IDs must contain 1–48 lowercase letters, digits or hyphens".into(),
+                );
+            }
+            if !ids.insert(&p.id) {
+                return Err(format!("Duplicate plugin ID: {}", p.id));
+            }
+            if p.name.is_empty() || p.name.len() > 120 {
+                return Err(format!("Invalid display name: {}", p.id));
+            }
+            if !(5..=3600).contains(&p.interval_secs) {
+                return Err(format!("Interval must be 5–3600 seconds: {}", p.id));
+            }
+            for value in [&p.url, &p.probe_url].into_iter().flatten() {
+                validate_url(value).map_err(|e| format!("{e}: {}", p.id))?;
+            }
+            if p.enabled {
+                match p.kind {
+                    Kind::Http if p.probe_url.is_none() => {
+                        return Err(format!("HTTP plugin needs probe_url: {}", p.id));
+                    }
+                    Kind::Link if p.url.is_none() => {
+                        return Err(format!("Link plugin needs url: {}", p.id));
+                    }
+                    Kind::Dns => {
+                        if p.dns_server.is_none() {
+                            return Err(format!("DNS plugin needs dns_server: {}", p.id));
+                        }
+                        let name = p
+                            .dns_name
+                            .as_deref()
+                            .ok_or_else(|| format!("DNS plugin needs dns_name: {}", p.id))?;
+                        if name.is_empty() || hickory_proto::rr::Name::from_ascii(name).is_err() {
+                            return Err(format!("Invalid DNS probe name: {}", p.id));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_url(value: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(value).map_err(|_| "Invalid HTTP URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("Only HTTP(S) URLs without embedded credentials are allowed".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_invalid_and_duplicate_plugins() {
+        let mut cfg: Config = toml::from_str("[[plugins]]\nid='dns'\nname='DNS'\nkind='dns'\ndns_server='127.0.0.1:53'\ndns_name='example.com'\n").unwrap();
+        assert!(cfg.validate().is_ok());
+        cfg.plugins.push(cfg.plugins[0].clone());
+        assert!(cfg.validate().is_err());
+        cfg.plugins.pop();
+        cfg.plugins[0].interval_secs = 0;
+        assert!(cfg.validate().is_err());
+    }
+    #[test]
+    fn rejects_active_content_and_url_credentials() {
+        for url in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "http://user:password@localhost/",
+        ] {
+            assert!(validate_url(url).is_err());
+        }
+        assert!(validate_url("http://127.0.0.1:9090/ui/").is_ok());
+    }
+}
