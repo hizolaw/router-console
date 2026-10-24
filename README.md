@@ -98,6 +98,7 @@ cp config/example.toml config/local.toml
 - `visible = false`：首页隐藏，仍采集，在“全部服务”中展示。
 - `interval_secs`：5–3600 秒；默认 15 秒。失败后逐步退避，最高为 300 秒或原周期，两者取较大值。
 - `url`：浏览器打开的管理页面；`probe_url`：后端访问的健康接口。远程访问时，两者可能需要使用不同地址，浏览器的 `localhost` 指浏览器所在设备。
+- `url_env`：可选的运行时环境变量名，指定后优先于 `url`。变量值通过已认证的状态 API 返回浏览器作为服务入口；缺失或非法时隐藏入口，不影响健康探测。值只允许不含用户名/密码的 HTTP(S) URL，最长 8192 字节。可由 `environmentFiles` 提供含自动配置参数的入口，避免把令牌写进 Nix store；入口不会写入浏览器持久存储。仅向可信管理用户提供此入口，打开目标页面后 URL 参数仍可能进入浏览器历史和目标服务日志。修改环境文件后重启控制台。
 - `token_env`：HTTP 探测的 Bearer 凭据环境变量名；凭据不返回浏览器。
 - `status_file`：`subscription` 插件必须指定的本地 JSON 文件路径。最多读取 64 KiB，支持 `lastAttempt`、`lastSuccess`、`error`、`count`、`attemptStatus` 字段。时间字段为字符串，节点数为非负整数；最近尝试 `success` 显示正常，`failed` 显示降级，`skipped` 或状态缺失显示未知。文件读取或解析失败显示通用错误，不暴露路径。文件必须由可信更新器生成，`error` 必须已经脱敏；不要指向包含订阅凭据的文件。NixOS 使用 DynamicUser 时，通过专用组和目录权限授予只读访问。
 

@@ -36,6 +36,12 @@
             networking.hostName = "console-check";
             system.stateVersion = "24.05";
             services.router-console.enable = true;
+            services.router-console.settings.plugins = [ {
+              id = "runtime-link";
+              name = "Runtime link";
+              kind = "link";
+              url_env = "ROUTER_CONSOLE_TEST_LINK";
+            } ];
           })
         ];
       };

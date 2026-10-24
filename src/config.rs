@@ -27,6 +27,8 @@ pub struct PluginConfig {
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
+    pub url_env: Option<String>,
+    #[serde(default)]
     pub probe_url: Option<String>,
     #[serde(default)]
     pub token_env: Option<String>,
@@ -103,13 +105,21 @@ impl Config {
             for value in [&p.url, &p.probe_url].into_iter().flatten() {
                 validate_url(value).map_err(|e| format!("{e}: {}", p.id))?;
             }
+            if let Some(key) = &p.url_env {
+                if key.is_empty()
+                    || key.len() > 128
+                    || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    return Err(format!("Invalid URL environment variable name: {}", p.id));
+                }
+            }
             if p.enabled {
                 match p.kind {
                     Kind::Http if p.probe_url.is_none() => {
                         return Err(format!("HTTP plugin needs probe_url: {}", p.id));
                     }
-                    Kind::Link if p.url.is_none() => {
-                        return Err(format!("Link plugin needs url: {}", p.id));
+                    Kind::Link if p.url.is_none() && p.url_env.is_none() => {
+                        return Err(format!("Link plugin needs url or url_env: {}", p.id));
                     }
                     Kind::Subscription if p.status_file.as_deref().is_none_or(str::is_empty) => {
                         return Err(format!("Subscription plugin needs status_file: {}", p.id));
@@ -134,7 +144,25 @@ impl Config {
     }
 }
 
+impl PluginConfig {
+    pub fn entry_url(&self) -> Option<String> {
+        self.entry_url_with(|key| std::env::var(key).ok())
+    }
+
+    fn entry_url_with(&self, lookup: impl FnOnce(&str) -> Option<String>) -> Option<String> {
+        let value = match &self.url_env {
+            Some(key) => lookup(key),
+            None => self.url.clone(),
+        }?;
+        validate_url(&value).ok()?;
+        Some(value)
+    }
+}
+
 fn validate_url(value: &str) -> Result<(), String> {
+    if value.len() > 8192 || value.chars().any(char::is_control) {
+        return Err("HTTP URL is too long or contains control characters".into());
+    }
     let url = reqwest::Url::parse(value).map_err(|_| "Invalid HTTP URL".to_string())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
@@ -171,6 +199,41 @@ mod tests {
         cfg.plugins[0].enabled = true;
         cfg.plugins[0].status_file = Some("/var/lib/router-status/subscription.json".into());
         assert!(cfg.validate().is_ok());
+    }
+    #[test]
+    fn runtime_entry_url_overrides_static_without_affecting_probe() {
+        let p: PluginConfig = toml::from_str("id='mihomo'\nname='Mihomo'\nkind='http'\nprobe_url='http://localhost/health'\nurl='http://localhost/static'\nurl_env='DASHBOARD_URL'").unwrap();
+        assert_eq!(
+            p.entry_url_with(|_| Some("https://router/ui/?secret=runtime".into()))
+                .as_deref(),
+            Some("https://router/ui/?secret=runtime")
+        );
+        for value in [
+            None,
+            Some("javascript:alert(1)".into()),
+            Some("http://user:password@router/".into()),
+            Some("http://router/".to_owned() + &"x".repeat(8192)),
+        ] {
+            assert_eq!(p.entry_url_with(|_| value), None);
+        }
+        assert_eq!(p.probe_url.as_deref(), Some("http://localhost/health"));
+        let mut static_plugin = p;
+        static_plugin.url_env = None;
+        assert_eq!(
+            static_plugin
+                .entry_url_with(|_| panic!("must not read environment"))
+                .as_deref(),
+            Some("http://localhost/static")
+        );
+    }
+    #[test]
+    fn link_accepts_runtime_url_even_when_environment_is_missing() {
+        let cfg: Config = toml::from_str(
+            "[[plugins]]\nid='dashboard'\nname='Dashboard'\nkind='link'\nurl_env='DASHBOARD_URL'",
+        )
+        .unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.plugins[0].entry_url_with(|_| None), None);
     }
     #[test]
     fn rejects_active_content_and_url_credentials() {
