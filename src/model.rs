@@ -90,6 +90,7 @@ mod tests {
             token_env: None,
             dns_server: None,
             dns_name: None,
+            status_file: None,
         };
         let mut s = Snapshot::initial(&p);
         s.health = Health::Healthy;

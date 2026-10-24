@@ -34,6 +34,8 @@ pub struct PluginConfig {
     pub dns_server: Option<SocketAddr>,
     #[serde(default)]
     pub dns_name: Option<String>,
+    #[serde(default)]
+    pub status_file: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, PartialEq)]
@@ -43,6 +45,7 @@ pub enum Kind {
     Http,
     Dns,
     Link,
+    Subscription,
 }
 
 fn listen() -> SocketAddr {
@@ -108,6 +111,9 @@ impl Config {
                     Kind::Link if p.url.is_none() => {
                         return Err(format!("Link plugin needs url: {}", p.id));
                     }
+                    Kind::Subscription if p.status_file.as_deref().is_none_or(str::is_empty) => {
+                        return Err(format!("Subscription plugin needs status_file: {}", p.id));
+                    }
                     Kind::Dns => {
                         if p.dns_server.is_none() {
                             return Err(format!("DNS plugin needs dns_server: {}", p.id));
@@ -152,6 +158,19 @@ mod tests {
         cfg.plugins.pop();
         cfg.plugins[0].interval_secs = 0;
         assert!(cfg.validate().is_err());
+    }
+    #[test]
+    fn subscription_requires_status_file_only_when_enabled() {
+        let mut cfg: Config = toml::from_str(
+            "[[plugins]]\nid='subscription'\nname='Subscription'\nkind='subscription'\n",
+        )
+        .unwrap();
+        assert!(cfg.validate().is_err());
+        cfg.plugins[0].enabled = false;
+        assert!(cfg.validate().is_ok());
+        cfg.plugins[0].enabled = true;
+        cfg.plugins[0].status_file = Some("/var/lib/router-status/subscription.json".into());
+        assert!(cfg.validate().is_ok());
     }
     #[test]
     fn rejects_active_content_and_url_credentials() {

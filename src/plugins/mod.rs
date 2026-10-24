@@ -1,5 +1,6 @@
 mod dns;
 mod http;
+mod subscription;
 mod system;
 
 use crate::{
@@ -32,6 +33,7 @@ pub fn build(p: &PluginConfig) -> Result<Box<dyn Collector>, String> {
         Kind::System => Ok(Box::new(system::SystemCollector::default())),
         Kind::Http => Ok(Box::new(http::HttpCollector::new(p)?)),
         Kind::Dns => Ok(Box::new(dns::DnsCollector::new(p))),
+        Kind::Subscription => Ok(Box::new(subscription::SubscriptionCollector::new(p))),
         Kind::Link => Ok(Box::new(LinkCollector)),
     }
 }

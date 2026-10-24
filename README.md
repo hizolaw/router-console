@@ -2,7 +2,7 @@
 
 面向低资源 Linux 路由器的模块化 Web 控制台。Rust / Axum 后端嵌入 Preact 静态前端，发布后只运行一个程序，不需要 Node。
 
-**v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、可选插件和服务入口。尚不包含配置编辑、服务重启或订阅更新操作。
+**v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、订阅更新状态、可选插件和服务入口。尚不包含配置编辑、服务重启或订阅更新操作。
 
 ## 快速运行
 
@@ -90,6 +90,7 @@ cp config/example.toml config/local.toml
 | `dns` | 直接向 `dns_server` 查询 `dns_name` 的 A 记录 |
 | `http` | 检查 `probe_url` 的 HTTP 状态与响应时间 |
 | `link` | 提供独立服务入口，不声明健康状态 |
+| `subscription` | 从本地脱敏 JSON 状态文件展示最近订阅更新结果 |
 
 所有插件独立配置：
 
@@ -98,6 +99,7 @@ cp config/example.toml config/local.toml
 - `interval_secs`：5–3600 秒；默认 15 秒。失败后逐步退避，最高为 300 秒或原周期，两者取较大值。
 - `url`：浏览器打开的管理页面；`probe_url`：后端访问的健康接口。远程访问时，两者可能需要使用不同地址，浏览器的 `localhost` 指浏览器所在设备。
 - `token_env`：HTTP 探测的 Bearer 凭据环境变量名；凭据不返回浏览器。
+- `status_file`：`subscription` 插件必须指定的本地 JSON 文件路径。最多读取 64 KiB，支持 `lastAttempt`、`lastSuccess`、`error`、`count`、`attemptStatus` 字段。时间字段为字符串，节点数为非负整数；最近尝试 `success` 显示正常，`failed` 显示降级，`skipped` 或状态缺失显示未知。文件读取或解析失败显示通用错误，不暴露路径。文件必须由可信更新器生成，`error` 必须已经脱敏；不要指向包含订阅凭据的文件。NixOS 使用 DynamicUser 时，通过专用组和目录权限授予只读访问。
 
 最多 32 个插件配置项，探测并发最多 4 个，单次探测最多 4 秒。多浏览器共享缓存。页面可见时每 5 秒刷新，过期结果显示“未知”。
 

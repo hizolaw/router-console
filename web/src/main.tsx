@@ -4,7 +4,7 @@ import type { ComponentChildren } from "preact";
 import "./style.css";
 
 type Health = "healthy" | "degraded" | "failed" | "unknown";
-type Kind = "system" | "http" | "dns" | "link";
+type Kind = "system" | "http" | "dns" | "link" | "subscription";
 interface Metric {
   label: string;
   value: string;
@@ -39,12 +39,14 @@ const kinds: Record<Kind, string> = {
   http: "HTTP CHECK",
   dns: "DNS CHECK",
   link: "QUICK LINK",
+  subscription: "SUBSCRIPTION",
 };
 const icons: Record<Kind, string> = {
   system: "▦",
   http: "⇄",
   dns: "◎",
   link: "↗",
+  subscription: "⟳",
 };
 
 function Icon({ children }: { children: ComponentChildren }) {
