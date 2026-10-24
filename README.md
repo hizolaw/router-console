@@ -17,7 +17,7 @@ cargo build --locked --release
 
 打开 **http://127.0.0.1:9080**。示例只启用真实系统指标，不要求安装 Mihomo 或 Sub-Store。Linux 提供 `/proc` 指标；其他系统尚未验证。
 
-前端在编译时嵌入。发布时只需复制 `target/release/router-console` 和自己的配置文件，启动时不需要源码目录。每次修改前端后应先重新构建前端，再构建 Rust。
+前端在编译时嵌入。在同架构、动态加载器和运行库兼容的环境中，运行只需 `target/release/router-console` 和自己的配置文件，不需要源码目录。当前产物是动态链接程序，GitHub 的 Ubuntu 二进制不能直接当成 NixOS 部署包；后续 Nix 打包会处理运行依赖。每次修改前端后应先重新构建前端，再构建 Rust。
 
 可选使用 `just install`、`just build`、`just check`、`just test`、`just run`。
 
