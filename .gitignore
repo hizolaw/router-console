@@ -12,5 +12,5 @@ result-*
 /config/*.local.toml
 *.token
 /artifacts/
-/playwright-report/
-/test-results/
+playwright-report/
+test-results/
