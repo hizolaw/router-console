@@ -2,9 +2,11 @@ import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import "./style.css";
+import { RulesEditor } from "./rules-editor";
 
 type Health = "healthy" | "degraded" | "failed" | "unknown";
-type Kind = "system" | "http" | "dns" | "link" | "subscription";
+type Kind =
+  "system" | "http" | "dns" | "link" | "subscription" | "mihomo_rules";
 interface Metric {
   label: string;
   value: string;
@@ -40,6 +42,7 @@ const kinds: Record<Kind, string> = {
   dns: "DNS CHECK",
   link: "QUICK LINK",
   subscription: "SUBSCRIPTION",
+  mihomo_rules: "MIHOMO RULES",
 };
 const icons: Record<Kind, string> = {
   system: "▦",
@@ -47,6 +50,7 @@ const icons: Record<Kind, string> = {
   dns: "◎",
   link: "↗",
   subscription: "⟳",
+  mihomo_rules: "☷",
 };
 
 function Icon({ children }: { children: ComponentChildren }) {
@@ -70,14 +74,18 @@ function time(value: number | null) {
     : "等待检查";
 }
 
-function Card({ plugin }: { plugin: Plugin }) {
+function Card({ plugin, onRules }: { plugin: Plugin; onRules: () => void }) {
   return (
     <article class={`card ${plugin.health}`}>
       <div class="card-top">
         <span class="card-icon">
           <Icon>{icons[plugin.kind]}</Icon>
         </span>
-        <Badge health={plugin.health} />
+        {plugin.kind === "mihomo_rules" ? (
+          <span class="badge unknown">管理入口</span>
+        ) : (
+          <Badge health={plugin.health} />
+        )}
       </div>
       <div class="eyebrow">{kinds[plugin.kind]}</div>
       <h2>{plugin.name}</h2>
@@ -95,6 +103,11 @@ function Card({ plugin }: { plugin: Plugin }) {
       </dl>
       <footer>
         <span>检查于 {time(plugin.checked_at)}</span>
+        {plugin.kind === "mihomo_rules" && (
+          <button type="button" class="manage-rules" onClick={onRules}>
+            管理规则 →
+          </button>
+        )}
         {plugin.url && (
           <a href={plugin.url} target="_blank" rel="noopener noreferrer">
             打开服务 <span aria-hidden="true">↗</span>
@@ -107,6 +120,7 @@ function Card({ plugin }: { plugin: Plugin }) {
 
 function App() {
   const [data, setData] = useState<Status | null>(null);
+  const [rulesPlugin, setRulesPlugin] = useState<Plugin | null>(null);
   const [page, setPage] = useState<"overview" | "services" | "about">(
     "overview",
   );
@@ -245,7 +259,9 @@ function App() {
         }
       : plugin,
   );
-  const checks = plugins.filter((plugin) => plugin.kind !== "link");
+  const checks = plugins.filter(
+    (plugin) => plugin.kind !== "link" && plugin.kind !== "mihomo_rules",
+  );
   const healthy = checks.filter((plugin) => plugin.health === "healthy").length;
   const failed = checks.filter(
     (plugin) => plugin.health === "failed" || plugin.health === "degraded",
@@ -256,6 +272,21 @@ function App() {
 
   return (
     <div class="layout">
+      {rulesPlugin && !needsAuth && (
+        <RulesEditor
+          id={rulesPlugin.id}
+          name={rulesPlugin.name}
+          token={token}
+          onClose={() => setRulesPlugin(null)}
+          onUnauthorized={() => {
+            setNeedsAuth(true);
+            setSignedIn(false);
+            setData(null);
+            setToken("");
+            setError("登录已过期，请重新登录。");
+          }}
+        />
+      )}
       <aside class="sidebar">
         <a
           class="brand"
@@ -295,7 +326,7 @@ function App() {
         </nav>
         <div class="sidebar-note">
           <span class="tiny-dot" />
-          独立运行 · 只读模式<p>控制台停止不会停止你的网络服务。</p>
+          独立运行 · 按需管理<p>控制台停止不会停止你的网络服务。</p>
         </div>
         <div class="sidebar-bottom">
           <span>ROUTER CONSOLE</span>
@@ -547,7 +578,11 @@ function App() {
               ) : displayed.length ? (
                 <section class="cards">
                   {displayed.map((plugin) => (
-                    <Card key={plugin.id} plugin={plugin} />
+                    <Card
+                      key={plugin.id}
+                      plugin={plugin}
+                      onRules={() => setRulesPlugin(plugin)}
+                    />
                   ))}
                 </section>
               ) : (

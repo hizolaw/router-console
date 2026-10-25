@@ -3,13 +3,14 @@ mod config;
 mod engine;
 mod model;
 mod plugins;
+mod rules;
 mod server;
 
 use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about = "Lightweight, read-only Linux router console")]
+#[command(version, about = "Lightweight, modular Linux router console")]
 struct Args {
     #[arg(short, long, default_value = "config/local.toml")]
     config: PathBuf,
@@ -56,12 +57,15 @@ async fn run() -> Result<(), String> {
     let state = server::AppState {
         cache: engine.cache.clone(),
         title: config.title,
+        rules: std::sync::Arc::new(rules::RulesRpc::new(&config.plugins)),
         token_hash: token.as_deref().map(server::token_hash),
-        loopback_only: config.listen.ip().is_loopback(),
+        loopback_only: config.listen.ip().is_loopback()
+            && config.auth.mode == config::AuthMode::Token
+            && token.is_none(),
         auth: std::sync::Arc::new(auth::Auth::new(config.auth)),
     };
     println!(
-        "Router Console {} listening on {} (read-only)",
+        "Router Console {} listening on {}",
         env!("CARGO_PKG_VERSION"),
         listener.local_addr().map_err(|e| e.to_string())?
     );

@@ -66,6 +66,8 @@ pub struct PluginConfig {
     pub dns_name: Option<String>,
     #[serde(default)]
     pub status_file: Option<String>,
+    #[serde(default)]
+    pub rpc_socket: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, PartialEq)]
@@ -76,6 +78,7 @@ pub enum Kind {
     Dns,
     Link,
     Subscription,
+    MihomoRules,
 }
 
 fn listen() -> SocketAddr {
@@ -156,6 +159,20 @@ impl Config {
                     }
                     Kind::Subscription if p.status_file.as_deref().is_none_or(str::is_empty) => {
                         return Err(format!("Subscription plugin needs status_file: {}", p.id));
+                    }
+                    Kind::MihomoRules => {
+                        let valid = p.rpc_socket.as_deref().is_some_and(|path| {
+                            path.starts_with('/')
+                                && !path.starts_with("/nix/store/")
+                                && path.len() <= 107
+                                && !path.chars().any(char::is_control)
+                        });
+                        if !valid {
+                            return Err(format!(
+                                "Mihomo rules plugin needs an absolute runtime rpc_socket: {}",
+                                p.id
+                            ));
+                        }
                     }
                     Kind::Dns => {
                         if p.dns_server.is_none() {
@@ -267,6 +284,25 @@ mod tests {
         .unwrap();
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.plugins[0].entry_url_with(|_| None), None);
+    }
+    #[test]
+    fn rules_requires_runtime_socket_only_when_enabled() {
+        let mut cfg: Config =
+            toml::from_str("[[plugins]]\nid='rules'\nname='Rules'\nkind='mihomo_rules'").unwrap();
+        assert!(cfg.validate().is_err());
+        for invalid in [
+            "relative.sock",
+            "/nix/store/secret.sock",
+            "/run/invalid\n.sock",
+        ] {
+            cfg.plugins[0].rpc_socket = Some(invalid.into());
+            assert!(cfg.validate().is_err());
+        }
+        cfg.plugins[0].rpc_socket = Some("/run/mihomo-rules/rpc.sock".into());
+        assert!(cfg.validate().is_ok());
+        cfg.plugins[0].rpc_socket = None;
+        cfg.plugins[0].enabled = false;
+        assert!(cfg.validate().is_ok());
     }
     #[test]
     fn rejects_active_content_and_url_credentials() {

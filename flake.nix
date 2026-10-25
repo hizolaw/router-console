@@ -41,6 +41,11 @@
               name = "Runtime link";
               kind = "link";
               url_env = "ROUTER_CONSOLE_TEST_LINK";
+            } {
+              id = "rules";
+              name = "Rules";
+              kind = "mihomo_rules";
+              rpc_socket = "/run/mihomo-rules/rpc.sock";
             } ];
           })
         ];

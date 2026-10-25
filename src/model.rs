@@ -92,6 +92,7 @@ mod tests {
             dns_server: None,
             dns_name: None,
             status_file: None,
+            rpc_socket: None,
         };
         let mut s = Snapshot::initial(&p);
         s.health = Health::Healthy;

@@ -28,6 +28,7 @@ pub struct AppState {
     pub token_hash: Option<[u8; 32]>,
     pub loopback_only: bool,
     pub auth: std::sync::Arc<Auth>,
+    pub rules: std::sync::Arc<crate::rules::RulesRpc>,
 }
 #[derive(Serialize)]
 struct Status {
@@ -43,6 +44,13 @@ pub fn token_hash(token: &str) -> [u8; 32] {
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/status", get(status))
+        .route(
+            "/plugins/{id}/rules",
+            get(crate::rules::get)
+                .put(crate::rules::save)
+                .layer(DefaultBodyLimit::max(512 * 1024)),
+        )
+        .route("/plugins/{id}/rules/reload", post(crate::rules::reload))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/api/auth", get(auth_info))
@@ -222,6 +230,7 @@ mod tests {
         let state = AppState {
             cache: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             title: "Test".into(),
+            rules: Arc::new(crate::rules::RulesRpc::new(&[])),
             token_hash: Some(token_hash("valid-token")),
             loopback_only: true,
             auth: Arc::new(Auth::new(crate::config::AuthConfig {
@@ -293,6 +302,7 @@ mod tests {
         let state = AppState {
             cache: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             title: "Test".into(),
+            rules: Arc::new(crate::rules::RulesRpc::new(&[])),
             token_hash: Some(token_hash("a-long-test-token")),
             loopback_only: true,
             auth: Arc::new(Auth::new(Default::default())),

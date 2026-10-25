@@ -34,6 +34,7 @@ pub fn build(p: &PluginConfig) -> Result<Box<dyn Collector>, String> {
         Kind::Http => Ok(Box::new(http::HttpCollector::new(p)?)),
         Kind::Dns => Ok(Box::new(dns::DnsCollector::new(p))),
         Kind::Subscription => Ok(Box::new(subscription::SubscriptionCollector::new(p))),
+        Kind::MihomoRules => Ok(Box::new(RulesCollector)),
         Kind::Link => Ok(Box::new(LinkCollector)),
     }
 }
@@ -44,6 +45,18 @@ impl Collector for LinkCollector {
         Reading {
             health: Health::Unknown,
             summary: "服务入口 · 未配置健康探测".into(),
+            metrics: vec![],
+        }
+    }
+}
+
+struct RulesCollector;
+#[async_trait]
+impl Collector for RulesCollector {
+    async fn collect(&mut self) -> Reading {
+        Reading {
+            health: Health::Unknown,
+            summary: "规则管理 · 按需载入".into(),
             metrics: vec![],
         }
     }

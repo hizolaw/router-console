@@ -2,7 +2,7 @@
 
 面向低资源 Linux 路由器的模块化 Web 控制台。Rust / Axum 后端嵌入 Preact 静态前端，发布后无需 Node；系统账户认证模式另有一个只监听本机 Unix socket 的 PAM 验证进程。
 
-**v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、订阅更新状态、可选插件和服务入口。尚不包含配置编辑、服务重启或订阅更新操作。
+**v0.1 提供只读状态与可选的规则管理。** 支持系统指标、DNS/HTTP 健康探测、订阅更新状态、可选插件和服务入口。默认不提供配置编辑、服务重启或节点订阅更新操作；可选 `mihomo_rules` 插件仅通过显式授权操作管理 Mihomo 规则。
 
 ## 快速运行
 
@@ -105,6 +105,7 @@ cp config/example.toml config/local.toml
 | `dns` | 直接向 `dns_server` 查询 `dns_name` 的 A 记录 |
 | `http` | 检查 `probe_url` 的 HTTP 状态与响应时间 |
 | `link` | 提供独立服务入口，不声明健康状态 |
+| `mihomo_rules` | 按需管理规则，通过部署提供的固定 Unix socket 操作，采集器不主动访问 worker |
 | `subscription` | 从本地脱敏 JSON 状态文件展示最近订阅更新结果 |
 
 所有插件独立配置：
@@ -115,6 +116,7 @@ cp config/example.toml config/local.toml
 - `url`：浏览器打开的管理页面；`probe_url`：后端访问的健康接口。远程访问时，两者可能需要使用不同地址，浏览器的 `localhost` 指浏览器所在设备。
 - `url_env`：可选的运行时环境变量名，指定后优先于 `url`。变量值通过已认证的状态 API 返回浏览器作为服务入口；缺失或非法时隐藏入口，不影响健康探测。值只允许不含用户名/密码的 HTTP(S) URL，最长 8192 字节。可由 `environmentFiles` 提供含自动配置参数的入口，避免把令牌写进 Nix store；入口不会写入浏览器持久存储。仅向可信管理用户提供此入口，打开目标页面后 URL 参数仍可能进入浏览器历史和目标服务日志。修改环境文件后重启控制台。
 - `token_env`：HTTP 探测的 Bearer 凭据环境变量名；凭据不返回浏览器。
+- `rpc_socket`：`mihomo_rules` 必需的绝对运行时 Unix socket 路径。规则 API 为已认证的 `GET/PUT /api/plugins/{id}/rules` 和 `POST /api/plugins/{id}/rules/reload`；PUT 接收 `revision`、`rules`、`subscriptions`。写入验证同源，RPC 请求/响应限 512 KiB，45 秒超时，最多一次并发。控制台不执行命令；校验、备份与原子应用由独立 worker 管理。
 - `status_file`：`subscription` 插件必须指定的本地 JSON 文件路径。最多读取 64 KiB，支持 `lastAttempt`、`lastSuccess`、`error`、`count`、`attemptStatus` 字段。时间字段为字符串，节点数为非负整数；最近尝试 `success` 显示正常，`failed` 显示降级，`skipped` 或状态缺失显示未知。文件读取或解析失败显示通用错误，不暴露路径。文件必须由可信更新器生成，`error` 必须已经脱敏；不要指向包含订阅凭据的文件。NixOS 使用 DynamicUser 时，通过专用组和目录权限授予只读访问。
 
 最多 32 个插件配置项，探测并发最多 4 个，单次探测最多 4 秒。多浏览器共享缓存。页面可见时每 5 秒刷新，过期结果显示“未知”。
