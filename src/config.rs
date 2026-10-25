@@ -10,6 +10,34 @@ pub struct Config {
     pub title: String,
     #[serde(default)]
     pub plugins: Vec<PluginConfig>,
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    #[default]
+    Token,
+    System,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthConfig {
+    pub mode: AuthMode,
+    pub socket: String,
+    pub session_ttl_secs: u64,
+    pub secure_cookie: bool,
+}
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            mode: AuthMode::Token,
+            socket: "/run/router-console-auth/auth.sock".into(),
+            session_ttl_secs: 43200,
+            secure_cookie: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -74,6 +102,12 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if !(60..=604800).contains(&self.auth.session_ttl_secs)
+            || !self.auth.socket.starts_with('/')
+            || self.auth.socket.len() > 107
+        {
+            return Err("Invalid authentication socket or session lifetime".into());
+        }
         if self.plugins.len() > 32 {
             return Err("At most 32 plugins are supported".into());
         }
@@ -105,13 +139,12 @@ impl Config {
             for value in [&p.url, &p.probe_url].into_iter().flatten() {
                 validate_url(value).map_err(|e| format!("{e}: {}", p.id))?;
             }
-            if let Some(key) = &p.url_env {
-                if key.is_empty()
+            if let Some(key) = &p.url_env
+                && (key.is_empty()
                     || key.len() > 128
-                    || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                {
-                    return Err(format!("Invalid URL environment variable name: {}", p.id));
-                }
+                    || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+            {
+                return Err(format!("Invalid URL environment variable name: {}", p.id));
             }
             if p.enabled {
                 match p.kind {

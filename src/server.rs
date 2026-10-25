@@ -1,15 +1,16 @@
 use crate::{
+    auth::{Auth, Credentials, LoginError, same_origin},
     engine::Cache,
     model::{Snapshot, now_secs},
 };
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use rust_embed::RustEmbed;
 use serde::Serialize;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub title: String,
     pub token_hash: Option<[u8; 32]>,
     pub loopback_only: bool,
+    pub auth: std::sync::Arc<Auth>,
 }
 #[derive(Serialize)]
 struct Status {
@@ -43,28 +45,95 @@ pub fn router(state: AppState) -> Router {
         .route("/status", get(status))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
+        .route("/api/auth", get(auth_info))
+        .route("/api/login", post(login).layer(DefaultBodyLimit::max(4096)))
+        .route("/api/logout", post(logout))
         .nest("/api", api)
         .fallback(asset)
         .layer(middleware::from_fn_with_state(state.clone(), headers))
         .with_state(state)
 }
 async fn authorize(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    if let Some(expected) = state.token_hash {
-        let authorized = request
-            .headers()
+    if !authenticated(&state, request.headers()).await {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Authentication required"})),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+async fn authenticated(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    if state.auth.system() {
+        return state.auth.username(headers).await.is_some();
+    }
+    state.token_hash.is_none_or(|expected| {
+        headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .is_some_and(|token| bool::from(token_hash(token).ct_eq(&expected)));
-        if !authorized {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Authentication required"})),
-            )
-                .into_response();
-        }
+            .is_some_and(|token| bool::from(token_hash(token).ct_eq(&expected)))
+    })
+}
+async fn auth_info(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Json<serde_json::Value> {
+    let username = if state.auth.system() {
+        state.auth.username(&headers).await
+    } else {
+        None
+    };
+    let mut response = serde_json::json!({"mode": state.auth.config.mode, "authenticated": authenticated(&state, &headers).await});
+    if let Some(username) = username {
+        response["username"] = username.into();
     }
-    next.run(request).await
+    Json(response)
+}
+async fn login(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(credentials): Json<Credentials>,
+) -> Response {
+    if !state.auth.system() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !same_origin(&headers, state.auth.config.secure_cookie) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match state.auth.login(credentials).await {
+        Ok(cookie) => {
+            let mut response = Json(serde_json::json!({"ok": true})).into_response();
+            response
+                .headers_mut()
+                .insert(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+            response
+        }
+        Err(error) => (
+            match error {
+                LoginError::Invalid => StatusCode::UNAUTHORIZED,
+                LoginError::Limited => StatusCode::TOO_MANY_REQUESTS,
+                LoginError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            },
+            Json(serde_json::json!({"error": "Login unsuccessful"})),
+        )
+            .into_response(),
+    }
+}
+async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
+    if !state.auth.system() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !same_origin(&headers, state.auth.config.secure_cookie) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    state.auth.revoke(&headers).await;
+    let mut response = Json(serde_json::json!({"ok": true})).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&state.auth.cookie("", true)).unwrap(),
+    );
+    response
 }
 async fn headers(State(state): State<AppState>, request: Request, next: Next) -> Response {
     // Protect unauthenticated loopback mode against browser DNS rebinding.
@@ -147,6 +216,77 @@ mod tests {
     use super::*;
     use std::{collections::BTreeMap, sync::Arc};
     #[tokio::test]
+    async fn system_mode_ignores_bearer_and_helper_failure_keeps_shell_available() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let state = AppState {
+            cache: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            title: "Test".into(),
+            token_hash: Some(token_hash("valid-token")),
+            loopback_only: true,
+            auth: Arc::new(Auth::new(crate::config::AuthConfig {
+                mode: crate::config::AuthMode::System,
+                socket: "/nonexistent/helper.sock".into(),
+                ..Default::default()
+            })),
+        };
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(state)).await.unwrap();
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let base = format!("http://{address}");
+        assert_eq!(
+            client
+                .get(format!("{base}/"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            client
+                .get(format!("{base}/api/status"))
+                .bearer_auth("valid-token")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let info = client.get(format!("{base}/api/auth")).send().await.unwrap();
+        assert_eq!(info.headers()[header::CACHE_CONTROL], "no-store");
+        let body: serde_json::Value = serde_json::from_str(&info.text().await.unwrap()).unwrap();
+        assert_eq!(body["mode"], "system");
+        assert_eq!(body["authenticated"], false);
+        for (origin, expected) in [
+            ("http://evil.example".to_owned(), StatusCode::FORBIDDEN),
+            (base.clone(), StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let response = client
+                .post(format!("{base}/api/login"))
+                .header(header::ORIGIN, origin)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(r#"{"username":"alice","password":"test"}"#)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            assert!(!response.text().await.unwrap().contains("helper.sock"));
+        }
+        assert_eq!(
+            client
+                .post(format!("{base}/api/logout"))
+                .header(header::ORIGIN, "http://evil.example")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        server.abort();
+    }
+    #[tokio::test]
     async fn authentication_and_host_boundary() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -155,6 +295,7 @@ mod tests {
             title: "Test".into(),
             token_hash: Some(token_hash("a-long-test-token")),
             loopback_only: true,
+            auth: Arc::new(Auth::new(Default::default())),
         };
         let server = tokio::spawn(async move {
             axum::serve(listener, router(state)).await.unwrap();

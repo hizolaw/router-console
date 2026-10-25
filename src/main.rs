@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod engine;
 mod model;
@@ -29,7 +30,9 @@ async fn main() {
 async fn run() -> Result<(), String> {
     let args = Args::parse();
     let config = config::Config::load(&args.config)?;
-    let token = if let Some(path) = args.token_file {
+    let token = if config.auth.mode == config::AuthMode::System {
+        None
+    } else if let Some(path) = args.token_file {
         Some(
             std::fs::read_to_string(path)
                 .map_err(|_| "Cannot read token file".to_string())?
@@ -39,7 +42,9 @@ async fn run() -> Result<(), String> {
     } else {
         std::env::var("ROUTER_CONSOLE_TOKEN").ok()
     };
-    validate_auth(config.listen, token.as_deref())?;
+    if config.auth.mode == config::AuthMode::Token {
+        validate_auth(config.listen, token.as_deref())?;
+    }
     if args.check {
         println!("Configuration valid");
         return Ok(());
@@ -53,6 +58,7 @@ async fn run() -> Result<(), String> {
         title: config.title,
         token_hash: token.as_deref().map(server::token_hash),
         loopback_only: config.listen.ip().is_loopback(),
+        auth: std::sync::Arc::new(auth::Auth::new(config.auth)),
     };
     println!(
         "Router Console {} listening on {} (read-only)",

@@ -1,5 +1,6 @@
 [package]
 name = "router-console"
+default-run = "router-console"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
@@ -10,6 +11,7 @@ async-trait = "0.1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 hickory-proto = { version = "0.25", default-features = false, features = ["std"] }
+libc = "0.2"
 mime_guess = "2"
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

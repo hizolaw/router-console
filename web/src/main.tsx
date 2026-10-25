@@ -112,6 +112,10 @@ function App() {
   );
   const [error, setError] = useState("");
   const [needsAuth, setNeedsAuth] = useState(false);
+  const [authMode, setAuthMode] = useState<"system" | "token" | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const [token, setToken] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -119,6 +123,46 @@ function App() {
   const [clock, setClock] = useState(Date.now());
   const sequence = useRef(0);
   useEffect(() => {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 8000);
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+        // Older token-only servers did not expose authentication discovery.
+        if (response.status === 404) {
+          setAuthMode("token");
+          return;
+        }
+        if (!response.ok) throw new Error("无法获取登录方式，请刷新重试。");
+        const auth = await response.json();
+        if (auth.mode !== "system" && auth.mode !== "token")
+          throw new Error("服务器返回了无效的登录方式。");
+        setAuthMode(auth.mode);
+        setSignedIn(auth.authenticated === true);
+        setUsername(auth.username ?? "");
+        if (auth.mode === "system") setNeedsAuth(auth.authenticated !== true);
+      } catch (e) {
+        if (!controller.signal.aborted || !document.hidden)
+          setError(
+            e instanceof Error && e.name !== "AbortError"
+              ? e.message
+              : "登录接口连接超时，请刷新重试。",
+          );
+      } finally {
+        clearTimeout(deadline);
+      }
+    })();
+    return () => {
+      clearTimeout(deadline);
+      controller.abort();
+    };
+  }, []);
+  useEffect(() => {
+    if (!authMode || (authMode === "system" && !signedIn)) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     let controller: AbortController | null = null;
@@ -135,12 +179,17 @@ function App() {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: controller.signal,
           cache: "no-store",
+          credentials: "same-origin",
         });
         if (!active || current !== sequence.current) return;
         if (response.status === 401) {
           setNeedsAuth(true);
           setData(null);
-          setError(token ? "访问令牌不正确，请重新输入。" : "");
+          if (authMode === "system") {
+            setSignedIn(false);
+            setUsername("");
+            setError("登录已过期，请重新登录。");
+          } else setError(token ? "访问令牌不正确，请重新输入。" : "");
           return;
         }
         if (!response.ok)
@@ -180,7 +229,7 @@ function App() {
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [token, tick]);
+  }, [token, tick, authMode, signedIn]);
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -272,6 +321,9 @@ function App() {
                   ? "连接异常"
                   : "已连接"
                 : "连接中"}
+            {authMode === "system" && signedIn && (
+              <span class="session-user">{username}</span>
+            )}
             <time>
               {new Date(clock).toLocaleTimeString("zh-CN", { hour12: false })}
             </time>
@@ -319,28 +371,107 @@ function App() {
             <section class="auth-panel">
               <div class="eyebrow">PROTECTED WORKSPACE</div>
               <h2>连接你的控制台</h2>
-              <p>输入服务端配置的访问令牌。令牌仅保存在当前页面内存中。</p>
+              <p>
+                {authMode === "system"
+                  ? "使用路由器系统账户登录。"
+                  : "输入服务端配置的访问令牌。令牌仅保存在当前页面内存中。"}
+              </p>
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
-                  if (draft.trim()) {
-                    setToken(draft.trim());
-                    setDraft("");
+                  if (authBusy) return;
+                  if (authMode !== "system") {
+                    if (draft.trim()) {
+                      setToken(draft.trim());
+                      setDraft("");
+                      setTick((value) => value + 1);
+                    }
+                    return;
+                  }
+                  const form = e.currentTarget;
+                  const values = new FormData(form);
+                  const account = String(values.get("username") ?? "");
+                  setAuthBusy(true);
+                  setError("");
+                  try {
+                    const response = await fetch("/api/login", {
+                      method: "POST",
+                      credentials: "same-origin",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        username: account,
+                        password: values.get("password"),
+                      }),
+                      signal: AbortSignal.timeout(10000),
+                    });
+                    if (!response.ok)
+                      throw new Error(
+                        response.status === 401
+                          ? "用户名或密码不正确。"
+                          : response.status === 429
+                            ? "登录尝试过于频繁，请稍后重试。"
+                            : response.status === 503
+                              ? "系统认证服务暂不可用，请稍后重试。"
+                              : "登录失败，请稍后重试。",
+                      );
+                    setUsername(account);
+                    setSignedIn(true);
+                    setNeedsAuth(false);
                     setTick((value) => value + 1);
+                  } catch (error) {
+                    setError(
+                      error instanceof Error && error.name !== "TimeoutError"
+                        ? error.message
+                        : "登录请求超时，请重试。",
+                    );
+                  } finally {
+                    const password = form.elements.namedItem("password");
+                    if (password instanceof HTMLInputElement)
+                      password.value = "";
+                    values.delete("password");
+                    setAuthBusy(false);
                   }
                 }}
               >
-                <label for="token">访问令牌</label>
-                <input
-                  id="token"
-                  type="password"
-                  value={draft}
-                  onInput={(e) => setDraft(e.currentTarget.value)}
-                  autoComplete="off"
-                  required
-                />
-                <button class="primary" type="submit">
-                  连接控制台 →
+                {authMode === "system" ? (
+                  <>
+                    <label for="username">用户名</label>
+                    <input
+                      id="username"
+                      name="username"
+                      autoComplete="username"
+                      required
+                      disabled={authBusy}
+                    />
+                    <label for="password">密码</label>
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      disabled={authBusy}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label for="token">访问令牌</label>
+                    <input
+                      id="token"
+                      type="password"
+                      value={draft}
+                      onInput={(e) => setDraft(e.currentTarget.value)}
+                      autoComplete="off"
+                      required
+                    />
+                  </>
+                )}
+                <button class="primary" type="submit" disabled={authBusy}>
+                  {authBusy
+                    ? "登录中…"
+                    : authMode === "system"
+                      ? "登录控制台 →"
+                      : "连接控制台 →"}
                 </button>
               </form>
             </section>
@@ -436,11 +567,32 @@ function App() {
           <footer class="page-footer">
             <span>轻量连接，清晰可见。</span>
             <span>RUST + PREACT · v{data?.version ?? "0.1.0"}</span>
-            {token && (
+            {(token || (authMode === "system" && signedIn)) && (
               <button
-                onClick={() => {
-                  setToken("");
-                  setData(null);
+                disabled={authBusy}
+                onClick={async () => {
+                  setAuthBusy(true);
+                  try {
+                    if (authMode === "system") {
+                      const response = await fetch("/api/logout", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        signal: AbortSignal.timeout(10000),
+                      });
+                      if (!response.ok && response.status !== 401)
+                        throw new Error("退出失败，请重试。");
+                    }
+                    setToken("");
+                    setData(null);
+                    setSignedIn(false);
+                    setUsername("");
+                    setNeedsAuth(true);
+                    setError("");
+                  } catch {
+                    setError("退出失败，请重试。");
+                  } finally {
+                    setAuthBusy(false);
+                  }
                 }}
               >
                 退出

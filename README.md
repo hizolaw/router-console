@@ -1,6 +1,6 @@
 # Router Console
 
-面向低资源 Linux 路由器的模块化 Web 控制台。Rust / Axum 后端嵌入 Preact 静态前端，发布后只运行一个程序，不需要 Node。
+面向低资源 Linux 路由器的模块化 Web 控制台。Rust / Axum 后端嵌入 Preact 静态前端，发布后无需 Node；系统账户认证模式另有一个只监听本机 Unix socket 的 PAM 验证进程。
 
 **v0.1 是可运行的只读版本。** 支持系统指标、DNS/HTTP 健康探测、订阅更新状态、可选插件和服务入口。尚不包含配置编辑、服务重启或订阅更新操作。
 
@@ -69,6 +69,21 @@ services.router-console = {
 默认使用本项目锁定的 nixpkgs 构建程序，不要求旧版宿主 nixpkgs 提供新的 Rust。服务以 DynamicUser 运行，通过 systemd credential 读取令牌，并限制权限与内存。默认首次启动在 `/var/lib/router-console/access.token` 生成 root-only 令牌；重启、切换系统不会覆盖它。管理员可用 `sudo cat /var/lib/router-console/access.token` 读取。
 
 可设置 `tokenFile = "/run/secrets/router-console"` 使用外部提供的运行时令牌；模块不会创建或覆盖外部文件。`environmentFiles` 可为 HTTP 插件提供运行时凭据。不要将秘密写入 `settings`，不要通过 Nix 路径值将秘密复制到 store。
+
+使用路由器现有系统账户登录：
+
+```nix
+services.router-console = {
+  enable = true;
+  authentication = "system";
+  allowedUsers = [ "nixos" ];
+  listenAddress = "192.0.2.1";
+};
+```
+
+系统模式通过独立 PAM service 验证指定账户的现有密码和账户状态，不创建密码或解锁账户，不改变 SSH 的认证设置。Web 进程仍是普通用户；仅本机受限 Unix socket 后的 helper 以 root 读取系统认证信息。认证失败统一提示，不向浏览器暴露 PAM 原因。helper 不可用时登录返回错误，已有会话和公开登录页面仍可用。
+
+登录成功生成随机会话，服务端仅保存摘要（最多 128 个），默认 12 小时过期；HttpOnly、SameSite=Strict cookie 使页面刷新后继续登录，退出立即撤销。密码不会写入浏览器存储，标准 username/current-password 表单兼容浏览器密码管理器。会话只在内存，服务重启后需要重新登录。独立配置的 `[auth]` 可设置 `session_ttl_secs` 与 HTTPS 下的 `secure_cookie`；系统模式不会接受旧 Bearer token。
 
 `openFirewall` 默认 false。需要 LAN 访问时设置实际 LAN 监听地址，并按部署的防火墙规则放行；暴露到不可信网络前应配置 HTTPS。`services.router-console.enable = false` 不创建控制台服务，也不停止其他网络服务。
 
