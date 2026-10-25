@@ -59,7 +59,7 @@ export function RulesEditor({
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(50000),
     });
     if (!response.ok) {
       if (response.status === 401) {
